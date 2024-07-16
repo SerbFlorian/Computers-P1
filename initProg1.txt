@@ -1,0 +1,387 @@
+@;=                                                          	     	=
+@;=== candy1_init.s: rutinas para inicializar la matriz de juego	  ===
+@;=                                                           	    	=
+@;=== Programador tarea 1A: florianalexandru.serb@estudiants.urv.cat	===
+@;=== Programador tarea 1B: florianalexandru.serb@estudiants.urv.cat	===
+@;=                                                       	        	=
+
+.include "../include/candy1_incl.i"
+
+@;-- .bss. variables (globales) no inicializadas ---
+.bss
+		.align 2
+@; matrices de recombinación: matrices de soporte para generar una nueva matriz
+@;	de juego recombinando los elementos de la matriz original.
+	mat_recomb1:	.space ROWS*COLUMNS
+	mat_recomb2:	.space ROWS*COLUMNS
+
+@;-- .text. código de las rutinas ---
+.text	
+		.align 2
+		.arm
+
+@;TAREA 1A;
+@; inicializa_matriz(*matriz, num_mapa): rutina para inicializar la matriz de
+@;	juego, primero cargando el mapa de configuración indicado por parámetro (a
+@;	obtener de la variable global 'mapas'), y después cargando las posiciones
+@;	libres (valor 0) o las posiciones de gelatina (valores 8 o 16) con valores
+@;	aleatorios entre 1 y 6 (+8 o +16, para gelatinas)
+@;	Restricciones:
+@;		* para obtener elementos de forma aleatoria se invocará la rutina
+@;			'mod_random'
+@;		* para evitar generar secuencias se invocará la rutina
+@;			'cuenta_repeticiones' (ver fichero "candy1_move.s")
+@;	Parámetros:
+@;		R0 = dirección base de la matriz de juego
+@;		R1 = número de mapa de configuración
+	.global inicializa_matriz
+inicializa_matriz:
+	push {r0-r10, lr}				@; guardar els registres que utilitzo a la pila
+		
+		ldr r4,=mapas				@; r4= @memoria de mapas
+		mov r5, r0					@; r5= @matriz
+		mov r6, #0					@; r6= desplaçament
+		mov r9, #COLUMNS			@; r9= limit columnes
+		mov r8, #ROWS				@; r8= limit files
+		mul r9, r8					@; col*fil
+		mul r9, r1					@; r9= posicio inicial del mapa
+		mov r1, #0					@; r1=i=0 
+		
+	@; Pas 1: Comencem el primer bucle per a recorre la matriu 
+	.Lfori:
+		mov r2, #0					@; r2=j=0
+		@; Comencem el segon bulce per a recorre la matriu
+	.Lforj:
+		ldrb r7, [r4, r9]			@; r7 valor casilla a evaluar
+		mov r10, r7					@; copia de r7=r10, per a no perdre el valor
+	@; Pas 3: Si conte 0/8/16 salta a Ltractament
+		tst r7, #7					@; si el valor == 0,8,16 -> tst r7, #7 and r7, #7 i cmp r7, #0
+		beq .Ltractament	
+		
+	@; Pas 2: si tenim objecte fixe, copiar a la matriu de joc
+		mov r7, r10					@; recupero la copia que tenia a r7
+		strb r10, [r5, r6]			@; r10 = valor de la posicio r6 + valor de la matriu r5
+		b .Lfi
+		
+	@; Pas3: si conte 0/8/16 generar_numAleat amb mod_random
+		.Ltractament:
+			mov r7, r10				@; recupero la copia a r7
+			mov r0, #6				@; preparo el parametre per a contar repeticions, es de 0-5
+			bl mod_random			
+			add r7, #1				@; sumo 1 per al rang, i passem de 1-6
+			add r7, r0				@; sumo el valor+aleatori
+			strb r7, [r5, r6]		@; guardo r7, al valor de la posicio r6 + valor de la matriu r5
+			
+	@; Pas 4: orientacio Oest o Nord cridant a cuenta_repeticiones
+			mov r0, r5				@; preparo el parametre per a cuenta_repeticiones
+			mov r3, #3				@; r3 en la orientacio NORD
+			bl cuenta_repeticiones	
+			
+			cmp r0, #3				@; si r0 >= 3 repeteixo bucle
+			bhs .Ltractament		
+			mov r0, r5				@; preparo parametres per a cuenta_repeticiones
+			mov r3, #2				@; r3 en la orientacio OESTE
+			bl cuenta_repeticiones	
+			
+			cmp r0, #3				@; si r0 >= 3 repeteixo bucle
+			bhs .Ltractament		
+			
+		.Lfi:
+			add r6, #1				@; desplaçament++ per anar al seugent element del mapa
+			add r9, #1				@; COLUMNS++
+			
+			add r2, #1				@; j++ -> passem a la seguent columna
+			cmp r2, #COLUMNS		@; j < columns, segueixo recorrent totes les columnes
+			blo .Lforj				
+			
+			add r1, #1				@; i++ -> passem a la seguent fila
+			cmp r1, #ROWS			@; i < rows, segueixo recorrent totes les files
+			blo .Lfori				
+		
+	pop {r0-r10, pc}				@;recupero registres de la pila
+
+@;TAREA 1B;
+@; recombina_elementos(*matriz): rutina para generar una nueva matriz de juego
+@;	mediante la reubicación de los elementos de la matriz original, para crear
+@;	nuevas jugadas.
+@;	Inicialmente se copiará la matriz original en 'mat_recomb1', para luego ir
+@;	escogiendo elementos de forma aleatoria y colocandolos en 'mat_recomb2',
+@;	conservando las marcas de gelatina.
+@;	Restricciones:
+@;		* para obtener elementos de forma aleatoria se invocará la rutina
+@;			'mod_random'
+@;		* para evitar generar secuencias se invocará la rutina
+@;			'cuenta_repeticiones' (ver fichero "candy1_move.s")
+@;		* para determinar si existen combinaciones en la nueva matriz, se
+@;			invocará la rutina 'hay_combinacion' (ver fichero "candy1_comb.s")
+@;		* se supondrá que siempre existirá una recombinación sin secuencias y
+@;			con combinaciones
+@;	Parámetros:
+@;		R0 = dirección base de la matriz de juego
+	.global recombina_elementos
+recombina_elementos:
+	push {r0-r12, lr}					@; guardar els registres que utilitzo a la pila
+	@;------------------------------------------------------------------------------@;
+	@; Copio tot el contingut de la matriu de joc sobre mat_recomb1 i mat_recomb2   @;
+	@;------------------------------------------------------------------------------@;
+		
+	@; Pas 1 : copiar tot el contingut actual de la matriu sobre mat_recomb1
+		ldr r1, =mat_recomb1			@; r1 el contingut de @ de memoria de mat_recomb1
+		@; copiar tot el contingut actual de la matriu sobre mat_recomb2
+		ldr r2, =mat_recomb2			@; r2 el contingut de @ de memoria de mat_recomb2
+		mov r5, r0						@; copio direccio base de matriu a r5
+			
+		.Lbucle1:
+			mov r6, #0					@; r6= desplaçament
+			mov r3, #0					@; r3=i=0
+		.Lfori1:
+			mov r4, #0					@; r4=j=0
+		.Lforj1:
+			ldrb r7, [r5, r6]			@; r7= valor de la casella
+			tst r7, #7					@; si el valor es 0/8/16 (tst r7, #7 -> and r7, #7 i cmp r7, #0)
+			beq .Lcas1					
+			
+			mov r9, r7					@; guardo l'estat de r7 a r9
+			and r9, #7					@; si es 7 o 15
+			cmp r9, #7					@; si r9==7 salto a tractar en Lcas1
+			beq .Lcas1					
+			
+			cmp r7, #6					@; si valor <= 6 -> element simple
+			ble .Lcas2					
+			
+			cmp r7, #14					@; si valor <=16 -> gelatina simple
+			ble .Lcas3					
+			
+			cmp r7, #22					@; si valor <= 22 -> gelatina doble
+			ble .Lcas4					
+			
+	@; Passos 1 i 2: r1=mat_recomb1 i r2=mat_recomb2
+			.Lcas1:	
+				strb r7, [r2, r6]		@; agafo 0/7/8/15/16 i guardo valor a @mat_recomb2
+				mov r7, #0				
+				strb r7, [r1, r6]		@; guardo 0 en @mat_recomb1
+				b .Lfi1					
+				
+			.Lcas2:	@; element simple
+				strb r7, [r1, r6]		@; guardo el valor en @mat_recomb1
+				mov r7, #25				
+				strb r7, [r2, r6]		@; guardo 25 a @mat_recomb2 per a diferenciarlo de les casilles buides
+				b .Lfi1					
+				
+			.Lcas3: @; gelatina simple
+				sub r7, #8				@; realitzo una resta per a passar a element simple
+				strb r7, [r1, r6]		@; guardo l'element simple (1-6) en @mat_recomb1
+				mov r7, #26				
+				strb r7, [r2, r6]		@; guardo 26 per a poder diferenciarlo de 8 (gelatina simple)
+				b .Lfi1					
+				
+			.Lcas4:	@; gelatines dobles
+				sub r7, #16				@; realitzo una resta per a passar a element simple
+				strb r7, [r1, r6]		@; guardo l'element simple (1-6) en @mat_recomb1
+				mov r7, #27				
+				strb r7, [r2, r6]		@; guardo 27 a @mat_recomb2 per a diferenciarlo de 16 (gelatina doble)
+				b .Lfi1
+				
+			.Lfi1:
+				add r6, #1				@; incremento el desplaçament++
+				add r4, #1				@; incremento la j++
+				cmp r4, #COLUMNS		@; el limit de columnes
+				blo .Lforj1				
+					
+				add r3, #1				@; incremento la i++
+				cmp r3, #ROWS			@; el limit de files
+				blo .Lfori1
+		
+	@;------------------------------------------------------------------------@;
+	@; 					Recombinar @mat_recomb1 i @mat_recomb2				  @;
+	@;------------------------------------------------------------------------@;
+		mov r8, r5						@; copio la @matriu a r8
+		mov r6, #0						@; poso el desplaçament a 0
+		mov r3, #0						@; poso la i=0
+		mov r10, #0						@; en r10= contador
+			
+	@; Pas 3: recorrec linealment fil*col totes los posicions de la matriu
+		.Lfori2:	
+			mov r4, #0					@; r4=j=0
+	@; Pas 4 si pos actual == 0/8/16 -> IGNORAR pos
+		.Lforj2:
+			ldrb r7, [r2, r6]			@; recupero a r7= valor de la casilla @mat_recomb2
+			tst r7, #7					@; si r7 ==7 -> valor casilla 0/8/16
+			beq .Lfi2					
+				
+			mov r9, r7					@; guardo estat de r7 en r9 per a no perdre la informacio
+			and r9, #7					@; si valor == 7 o 15
+			cmp r9, #7					
+			beq .Lfi2					
+				
+	@; Pas 5: EN CAS CONTRARI, SALTO A Ltractament2 PER A SELECCIONAR UNA POS aleatoria de @mat_recomb1 -> valor != 0
+			cmp r7, #25					@; valor casilla != element simple
+			bne .Ltract8				
+			mov r7, #0					@; si son iguals pos r7 a 0 i salto al tractament2
+			b .Ltractament2				
+				
+			.Ltract8: @; valor casilla = gelatina simple
+				cmp r7, #26				@; si r7 != gelatina simple tracto16
+				bne .Ltract16			
+				mov r7, #8				@; si son iguals poso a r7 a 8 salto al tractament2
+				b .Ltractament2			
+				
+			.Ltract16: @; valor casilla = gelatina doble
+				cmp r7, #27				@; si r7 != gelatina doble tractament2
+				bne .Ltractament2		
+				mov r7, #16				@; si son iguals poso a r7 a 16 
+				
+	@; Pas 5 i 6: seleccionar pos aleatoria de mat_recomb1 que el contingui valor != 0
+			.Ltractament2:
+				add r10, #1				@; incremento el r10=contador++
+				mov r0, #COLUMNS		@; r0=cantitat maxima de columnes
+				mov r9, #ROWS			@; r9= cantitat maxima de files
+				mul r0, r9				@; r0= rang total de col*fil per al mod_random
+				cmp r10, #800			@; contador == 800(limit) ja que NO sira possible trobar un valor y tornar a començar desdel principi
+				beq .Lbucle1			
+					
+				bl mod_random			
+				ldrb r9, [r1, r0]		@; r9= valor casilla aleatoria de @mat_recomb1
+				cmp r9, #0				@; si r9 == 0 torno al inci del tractament
+				beq .Ltractament2		
+					
+	@; Pas 6: Afegir el codi obtingut de mat_recomb1 a la pos actual de mat_recomb2, sumant el possible codi de gelatina
+				add r9, r7				@; sumar 0/8/16 al valor de la casilla aleatoria
+				strb r9, [r2, r6]		@; guardo el valor en @mat_recomb2
+				mov r5, r0				@; copio la posicio a r5
+				mov r0, r2				@; r0=mat_recomb2 l'utilitzare per a comparar elements consecutius
+				mov r11, r1				@; r11=@mat_recomb1
+				mov r12, r2				@; r12=@mat_recomb2
+					
+				@; NORD -> sec. vertical
+				mov r1, r3				@; en r1= i
+				mov r2, r4				@; en r2= j
+				mov r3, #3				@; r3 direccio del NORD
+				bl cuenta_repeticiones
+					
+				mov r3, r1				@; carrego a r3=i
+				mov r1, r11				@; r1= @mat_recomb1
+				mov r2, r12				@; r2= @mat_recomb2
+				cmp r0, #3				@; si >= 3 o + elements consecutius
+				bhs .Ltractament2		
+					
+				@; OEST -> sec. oritzontal
+				mov r0, r2				@; r0= @mat_recomb2
+				mov r1, r3				@; r1=i
+				mov r2, r4				@; r2=j
+				mov r3, #2				@; r3 direccio OEST
+				bl cuenta_repeticiones
+					
+				mov r3, r1				@; r3= i
+				mov r1, r11				@; r1= @mat_recomb1
+				mov r2, r12				@; r2= @mat_recomb2
+				cmp r0, #3				@; si >= 3 o + elements consecutius
+				bhs .Ltractament2		
+					
+	@; Pas 7: poso a 0 totes les posicions de mat_recomb1
+				mov r9, #0				@; files=0
+				strb r9, [r1, r5]		@; guardo a 0 a @mat_recomb1
+				mov r10, #0				@; contador=0
+				
+			.Lfi2:
+				add r6, #1				@; incremento el desplaçament++
+				add r4, #1				@; incremento la j++
+				cmp r4, #COLUMNS		@; r4 < limit de columnes
+				blo .Lforj2	
+					
+				add r3, #1				@; incremento la i++
+				cmp r3, #ROWS			@; si r3 < limit files
+				blo .Lfori2				
+			
+	@;------------------------------------------------------------------------@;
+	@; 					Copiar @mat_recomb2 a @matriu	(r0)				  @;
+	@;------------------------------------------------------------------------@;
+		mov r0, r8						@; r0= matriu
+		mov r3, #0						@; r3=i=0
+		mov r6, #0						@; r6=desplaçament
+			
+	@; Pas 8: copiar tot el contingut de mat_recomb2 a matriu
+			
+		.Lfori3:
+			mov r4, #0					@; r4=j=0
+		.Lforj3:
+			ldrb r9, [r2, r6]			@; r9= valor casilla @mat_recomb2
+			strb r9, [r0, r6]			@; r9= guardo valor de casilla a @matriu
+				
+			add r6, #1					@; incremento el desplaçament++
+			add r4, #1					@; incremento la j++
+			cmp r4, #COLUMNS			@; r4 != limit columnes
+			bne .Lforj3					
+				
+			add r3, #1					@; incremento la i++
+			cmp r3, #ROWS				@; r3 != limit files
+			bne .Lfori3					
+		
+	pop {r0-r12, pc}					@;recupero registres de la pila
+
+@;:::RUTINAS DE SOPORTE:::
+
+@; mod_random(n): rutina para obtener un número aleatorio entre 0 y n-1,
+@;	utilizando la rutina 'random'
+@;	Restricciones:
+@;		* el parámetro 'n' tiene que ser un valor entre 2 y 255, de otro modo,
+@;		  la rutina lo ajustará automáticamente a estos valores mínimo y máximo
+@;	Parámetros:
+@;		R0 = el rango del número aleatorio (n)
+@;	Resultado:
+@;		R0 = el número aleatorio dentro del rango especificado (0..n-1)
+
+@;=                                                               		=
+@;=== candy1_init.s: rutinas para inicializar la matriz de juego	  ===
+@;=                                                               		=
+
+	.global mod_random
+mod_random:
+	push {r1-r4, lr}
+	
+	cmp r0, #2					@; compara el rango de entrada con el mínimo
+	bge .Lmodran_cont			@; si r0 >= 2 nombre enters salta a la funcio
+	mov r0, #2					@; si menor, fija el rango mínimo
+	.Lmodran_cont:				
+		and r0, #0xff			@; filtra los 8 bits de menos peso
+		sub r2, r0, #1			@; R2 = R0-1 (número más alto permitido)
+		mov r3, #1				@; R3 = máscara de bits
+	.Lmodran_forbits:
+		cmp r3, r2				@; genera una máscara superior al rango requerido
+		bhs .Lmodran_loop		@; si r3 >= r2 nombres naturals salta a la funcio
+		mov r3, r3, lsl #1		@; mou a r3 el resultat de r3 del desplaçament a l'esquerra de 1 bit
+		orr r3, #1				@; inyecta otro bit
+		b .Lmodran_forbits		@; despres d'afegir 1bit a r3 salta a l'inci de la funcio
+		
+	.Lmodran_loop:
+		bl random				@; R0 = número aleatorio de 32 bits
+		and r4, r0, r3			@; filtra los bits de menos peso según máscara
+		cmp r4, r2				@; si resultado superior al permitido,
+		bhi .Lmodran_loop		@; si r4 > r2, repite el proceso
+		mov r0, r4				@; R0 devuelve número aleatorio restringido a rango
+		
+	pop {r1-r4, pc}
+
+
+@; random(): rutina para obtener un número aleatorio de 32 bits, a partir de
+@;	otro valor aleatorio almacenado en la variable global 'seed32' (declarada
+@;	externamente)
+@;	Restricciones:
+@;		* el valor anterior de 'seed32' no puede ser 0
+@;	Resultado:
+@;		R0 = el nuevo valor aleatorio (también se almacena en 'seed32')
+random:
+	push {r1-r5, lr}
+		
+	ldr r0, =seed32				@; R0 = dirección de la variable 'seed32'
+	ldr r1, [r0]				@; R1 = valor actual de 'seed32'
+	ldr r2, =0x0019660D			@; carrega a r2 el registre 0x0019660D
+	ldr r3, =0x3C6EF35F			@; carrega a r3 el registre 0x3C6EF35F
+	umull r4, r5, r1, r2		@; r4= unsigned r1 * r2 multiplicacio sense signe
+	add r4, r3					@; R5:R4 = nuevo valor aleatorio (64 bits)
+	str r4, [r0]				@; guarda los 32 bits bajos en 'seed32'
+	mov r0, r5					@; devuelve los 32 bits altos como resultado
+		
+	pop {r1-r5, pc}	
+
+.end
